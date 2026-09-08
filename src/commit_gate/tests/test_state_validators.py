@@ -125,8 +125,6 @@ class TestStateValidators(unittest.TestCase):
         )
         self.assertIn(Reason.UNKNOWN_EDGE, self.validate(proposal))
 
-<<<<<<< HEAD
-
         # --- Test for Soundness Gates
 class TestSoundnessGates(unittest.TestCase):
     """ replay, self-certification, and alignment gates."""
@@ -394,8 +392,6 @@ class TestSoundnessGates(unittest.TestCase):
         )
         self.assertIn(Reason.UNKNOWN_STATUS_VALUE, self.validate(proposal))
  
-
-=======
     def test_check_upsert_field_conflict_differing_value(self):
         self.view.add_node("p1/fs1", "FormalState", {"status": "open"})
         proposal = propose(UpsertNode("FormalState", "p1/fs1", {"status": "closed"}))
@@ -418,7 +414,6 @@ class TestSoundnessGates(unittest.TestCase):
     def test_check_upsert_new_node_unaffected(self):
         proposal = propose(UpsertNode("FormalState", "p1/fs1", {"status": "open"}))
         self.assertEqual(self.validate(proposal), [])
->>>>>>> 82b2e22 (Reject conflicting UpsertNode re-upserts at the gate)
-
+        
 if __name__ == "__main__":
     unittest.main()
