@@ -11,9 +11,22 @@ from artifacts.store import ArtifactStore
 from artifacts.errors import ArtifactStoreUnavailable
 
 _TEST_DB_URL = os.environ.get(
-    "ARTIFACT_DB_URL",
-    "postgresql://atp_dev:devpassword@localhost:5432/persistent_atp_artifacts",
+    "ARTIFACT_TEST_DB_URL",
+    "postgresql://postgres:postgres@localhost:5432/test_db",
 )
+
+def _assert_safe_to_truncate(db_url: str) -> None:
+    """Refuse to run destructive test setup against anything that isn't
+    obviously a test database — a second line of defense beyond using a
+    separate env var."""
+    if "test" not in db_url.rsplit("/", 1)[-1].lower():
+        raise RuntimeError(
+            f"refusing to run destructive tests against {db_url!r}: "
+            "database name must contain 'test'"
+        )
+
+
+_assert_safe_to_truncate(_TEST_DB_URL)
 
 
 class TestArtifactStoreUnavailable(unittest.TestCase):
