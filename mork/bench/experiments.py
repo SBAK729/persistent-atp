@@ -280,7 +280,9 @@ def e5_commit_latency(report: Report, quick: bool) -> None:
         gate = CommitGate(view, store)
 
         proof = f"commit-{backend.lower()}"
-        token = store.acquire_lease(proof, "L1")
+        token = store.acquire_lease(
+            proof, "L1", actor="bench", worker_class="coordinator"
+        )
         batch = proposals(proof, count, rng, lease=("L1", token))
 
         # Every proposal is committed exactly once -- they carry ascending
@@ -293,6 +295,10 @@ def e5_commit_latency(report: Report, quick: bool) -> None:
             result = gate.commit(next(pending))
             if not result.accepted:
                 rejected.extend(r.reason.value for r in result.rejections)
+            elif backend == "MemoryView":
+                # MemoryView is projected explicitly on dev; MorkView is the
+                # live projection and is advanced by CommitGate itself.
+                view.apply_journal_event(store, proof, result.revision)
 
         median, p95, iterations = measure(
             commit_next, iterations=count - warmup, warmup=warmup
@@ -332,7 +338,9 @@ def e6_cold_recovery(report: Report, quick: bool) -> None:
         proof = f"replay{events}"
 
         filling = CommitGate(MemoryView(), store)
-        token = store.acquire_lease(proof, "L1")
+        token = store.acquire_lease(
+            proof, "L1", actor="bench", worker_class="coordinator"
+        )
         for proposal in proposals(proof, events, rng, lease=("L1", token)):
             filling.commit(proposal)
 

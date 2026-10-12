@@ -29,8 +29,10 @@ from .reasons import Reason, Rejection
 from .state import (
     EdgeRecord,
     GraphView,
+    MutableView,
     MemoryView,
     NodeRecord,
+    ProjectionView,
     ReadView,
     WriteView,
 )
@@ -80,8 +82,10 @@ __all__ = [
 
     # State Contracts
     "ReadView",
+    "MutableView",
     "WriteView",
     "GraphView",
+    "ProjectionView",
     "NodeRecord",
     "EdgeRecord",
     "MemoryView",

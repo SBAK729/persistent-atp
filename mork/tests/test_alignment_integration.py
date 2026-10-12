@@ -39,11 +39,20 @@ class TestAlignmentMorkIntegration(unittest.TestCase):
         self.declaration_id = f"{self.proof}/fd-1"
         self.alignment_id = f"{self.proof}/al-1"
 
+        seed_token = self.store.acquire_lease(
+            self.proof,
+            "lease-seed",
+            actor="coordinator",
+            worker_class="coordinator",
+        )
+
         seed = Proposal(
             proof_id=self.proof,
             actor="coordinator",
             worker_class="coordinator",
             base_revision=0,
+            lease_id="lease-seed",
+            fencing_token=seed_token,
             ops=(
                 UpsertNode("Claim", self.claim_id, {"status": "provisional"}),
                 UpsertNode(
@@ -57,7 +66,12 @@ class TestAlignmentMorkIntegration(unittest.TestCase):
         self.assertTrue(result.accepted, result.rejections)
 
     def _commit_alignment(self):
-        token = self.store.acquire_lease(self.proof, "lease-alignment")
+        token = self.store.acquire_lease(
+            self.proof,
+            "lease-alignment",
+            actor="alignment-reviewer-agent",
+            worker_class="alignment-reviewer",
+        )
         request = AlignmentReviewRequest(
             proof_id=self.proof,
             claim_id=self.claim_id,
@@ -143,8 +157,11 @@ class TestAlignmentMorkIntegration(unittest.TestCase):
         self.assertEqual(self.view.atoms(self.proof), before)
         self.assertEqual(self.view.projected_revision(self.proof), 1)
         rejections = self.store.read_rejections(self.proof)
-        self.assertEqual(len(rejections), 1)
-        self.assertEqual(rejections[0]["payload"]["actor"], "broken-worker")
+        self.assertEqual(len(rejections), len(result.rejections))
+        self.assertTrue(rejections)
+        self.assertTrue(
+            all(row["payload"]["actor"] == "broken-worker" for row in rejections)
+        )
 
     def test_atoms_are_isolated_by_proof(self):
         self._commit_alignment()

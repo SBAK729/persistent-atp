@@ -143,11 +143,20 @@ def main() -> int:
 
     claim = INFORMAL_STATEMENT
     # Seed the claim and candidate declarations.
+    seed_lease_id = f"{proof_id}-seed-lease"
+    seed_token = store.acquire_lease(
+        proof_id,
+        seed_lease_id,
+        actor="experiment-coordinator",
+        worker_class="coordinator",
+    )
     seed = Proposal(
         proof_id=proof_id,
         actor="experiment-coordinator",
         worker_class="coordinator",
         base_revision=0,
+        lease_id=seed_lease_id,
+        fencing_token=seed_token,
         ops=(
             UpsertNode("Claim", claim_id, {"status": "provisional", "statement": claim}),
             *(
@@ -167,7 +176,12 @@ def main() -> int:
     logger.info("seed committed at revision %s", seed_result.revision)
 
     lease_id = f"{proof_id}-alignment-lease"
-    fencing_token = store.acquire_lease(proof_id, lease_id)
+    fencing_token = store.acquire_lease(
+        proof_id,
+        lease_id,
+        actor=worker.actor,
+        worker_class="alignment-reviewer",
+    )
     review_records: list[dict[str, Any]] = []
     commit_records: list[dict[str, Any]] = []
 

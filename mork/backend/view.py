@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Iterator, Mapping
 
-from commit_gate.state import EdgeRecord, NodeRecord
+from commit_gate.state import EdgeRecord, MemoryView, NodeRecord, ReadView
 from mork.atoms import (
     edge_atoms,
     encode,
@@ -92,6 +92,44 @@ class MorkView:
         self._space = space
 
     # ---------------------------------------------------------------- reads
+
+    def snapshot(self, proof_id: str) -> tuple[int, ReadView]:
+        """Copy one proof at a stable projected revision for validation."""
+        proof = encode(proof_id)
+        for _ in range(3):
+            revision = self.projected_revision(proof_id)
+            clone = MemoryView()
+
+            node_rows = self._space.match(
+                f"(node {proof} $id $label)", "($id $label)"
+            )
+            for row in sorted(node_rows):
+                local_id, label = (decode(token) for token in tokens(row))
+                clone.add_node(
+                    f"{proof_id}/{local_id}",
+                    label,
+                    dict(self._read_fields("field", proof_id, local_id)),
+                )
+
+            edge_rows = self._space.match(
+                f"(edge {proof} $eid $rel $src $dst)",
+                "($eid $rel $src $dst)",
+            )
+            for row in sorted(edge_rows):
+                local_edge, rel_type, local_src, local_dst = (
+                    decode(token) for token in tokens(row)
+                )
+                clone.add_edge(
+                    rel_type,
+                    f"{proof_id}/{local_src}",
+                    f"{proof_id}/{local_dst}",
+                    f"{proof_id}/{local_edge}",
+                    dict(self._read_fields("efield", proof_id, local_edge)),
+                )
+
+            if revision == self.projected_revision(proof_id):
+                return revision, clone
+        raise RuntimeError("MORK projection changed while taking a snapshot")
 
     def node(self, node_id: str) -> NodeRecord | None:
         proof_id = extract_proof_id(node_id)

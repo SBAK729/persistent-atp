@@ -39,7 +39,7 @@ __all__ = [
 
 _LABEL = "FormalState"
 _KINDS = ("or", "and", "goal")
-_WORKER = "llm-research"
+_WORKER = "coordinator"
 _BATCH = 2000  # atoms per `add`, so bulk load costs one crossing per 2,000
 
 

@@ -29,6 +29,9 @@ needs_mork = unittest.skipIf(_SPACE is None, "MORK library unavailable")
 class ReadOnlyView:
     """A view with no write methods, to show the gate notices."""
 
+    def snapshot(self, proof_id: str):
+        return 0, self
+
     def node(self, node_id: str) -> NodeRecord | None:
         return None
 
@@ -43,22 +46,28 @@ class ReadOnlyView:
 
 
 class TestProjectsFlag(unittest.TestCase):
-    def test_a_writable_view_is_projected_into(self):
-        self.assertTrue(CommitGate(MemoryView(), JournalStore()).projects)
+    def test_an_independently_projected_view_is_not_written_through(self):
+        self.assertFalse(CommitGate(MemoryView(), JournalStore()).projects)
 
     def test_a_read_only_view_is_not(self):
         self.assertFalse(CommitGate(ReadOnlyView(), JournalStore()).projects)
 
     def test_a_read_only_view_still_commits(self):
         """Validation and journalling do not depend on being able to project."""
-        gate = CommitGate(ReadOnlyView(), JournalStore())
+        store = JournalStore()
+        token = store.acquire_lease(
+            "p1", "lease-1", actor="test", worker_class="coordinator"
+        )
+        gate = CommitGate(ReadOnlyView(), store)
         result = gate.commit(
             Proposal(
                 proof_id="p1",
                 actor="test",
-                worker_class="test",
+                worker_class="coordinator",
                 ops=(UpsertNode("FormalState", "p1/fs1", {"status": "open"}),),
                 base_revision=0,
+                lease_id="lease-1",
+                fencing_token=token,
             )
         )
         self.assertTrue(result.accepted, result.rejections)
@@ -73,7 +82,12 @@ class MorkGateCase(unittest.TestCase):
         self.gate = CommitGate(self.view, self.store)
         self.proof = f"{self.prefix}-{self._testMethodName}"
         # A status change needs the write lease; these tests hold it throughout.
-        self.token = self.store.acquire_lease(self.proof, "lease-1")
+        self.token = self.store.acquire_lease(
+            self.proof,
+            "lease-1",
+            actor="test",
+            worker_class="coordinator",
+        )
 
     prefix = "g"
 
@@ -87,7 +101,7 @@ class MorkGateCase(unittest.TestCase):
         return Proposal(
             proof_id=self.proof,
             actor="test",
-            worker_class="test",
+            worker_class="coordinator",
             ops=ops,
             base_revision=base_revision,
             lease_id="lease-1",

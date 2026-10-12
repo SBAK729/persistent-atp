@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "python-dotenv>=1.0",
     "neo4j>=5.14",
+    "psycopg[binary]>=3.3.6",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +32,14 @@ package-dir = {"" = "src", "mork" = "mork"}
 
 [tool.setuptools.packages.find]
 where = ["src", "."]
-include = ["commit_gate*", "mork*"]
+include = [
+    "alignment*",
+    "artifacts*",
+    "commit_gate*",
+    "mathproof*",
+    "shared*",
+    "mork*",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
@@ -41,6 +49,7 @@ testpaths = [
     "src/shared/tests",
     "src/mathproof/tests",
     "src/alignment/tests",
+    "src/artifacts/tests",
     "mork/projector/tests",
     "mork/visualizer/tests",
     "mork/tests",

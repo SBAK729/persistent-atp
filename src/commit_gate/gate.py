@@ -24,10 +24,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from .apply import apply_ops
-from .ops import ops_from_dicts
 from .proposal import Proposal
-from .reasons import Rejection
-from .state import ReadView, WriteView
+from .reasons import Reason, Rejection
+from .state import JournalOverlayView, ProjectionView, ReadView
 from .store import ConcurrencyError, JournalStore
 from .validate import validate_proposal
 
@@ -75,25 +74,27 @@ class CommitResult:
 class CommitGate:
     """Validates proposals, journals the ones that hold, and projects them.
 
-    `view` answers questions about committed state; `store` is the journal. The
-    gate holds no snapshot of the head — `append` reads it under the write lock.
+    `view` provides a revisioned snapshot of projected state; `store` is the
+    journal. Before validation, the gate overlays journal events the snapshot
+    has not yet applied. Append compares the same revision under the write
+    lock, rejecting a proposal if the head moved meanwhile.
 
-    If `view` can also be written — a `GraphView` such as `MorkView` — accepted
-    proposals are projected into it. Reads and writes then go through one object,
-    so the gate cannot validate against one picture of state and write another.
+    A `ProjectionView` such as `MorkView` is also updated after the durable
+    journal append. Other read views remain independently projected and are
+    brought current for validation by the journal overlay.
     """
 
     def __init__(self, view: ReadView, store: JournalStore):
         self._view = view
         self._store = store
-        self._projects = isinstance(view, WriteView)
+        self._projection = view if isinstance(view, ProjectionView) else None
         # Reentrant: `commit` calls `validate`, which takes it again.
         self._lock = threading.RLock()
 
     @property
     def projects(self) -> bool:
         """Whether accepted proposals are written through to the graph."""
-        return self._projects
+        return self._projection is not None
 
     @property
     def view(self) -> ReadView:
@@ -112,7 +113,7 @@ class CommitGate:
         `proof_id` is omitted. `commit` does this on demand, but calling it at
         startup surfaces a stalled projection while someone is watching.
         """
-        if not self._projects:
+        if self._projection is None:
             return {}
         with self._lock:
             proofs = [proof_id] if proof_id is not None else list(self._store.proof_ids())
@@ -124,25 +125,83 @@ class CommitGate:
 
     def _catch_up_locked(self, proof_id: str) -> int:
         """Bring the graph level with the journal for one proof."""
-        mark = self._view.projected_revision(proof_id)
+        if self._projection is None:
+            return 0
+        mark = self._projection.projected_revision(proof_id)
         if mark == self._store.head(proof_id)[0]:
             return 0
 
         replayed = 0
         for revision, payload in self._store.read_events_after(proof_id, mark):
             try:
-                apply_ops(self._view, ops_from_dicts(payload.get("ops") or ()))
+                event = Proposal.from_dict(payload)
+                if event.proof_id != proof_id or not event.ops:
+                    raise ValueError("journal event has the wrong proof or no operations")
+                apply_ops(self._projection, event.ops)
             except Exception as exc:
                 raise ProjectionError(revision, "", exc) from exc
             # Marked per event: an interrupted replay resumes rather than restarts.
-            self._view.record_projected(proof_id, revision)
+            self._projection.record_projected(proof_id, revision)
             replayed += 1
         return replayed
 
     def validate(self, proposal: Proposal) -> list[Rejection]:
-        """Every rule violation in `proposal`, or an empty list."""
-        with self._lock:
-            return validate_proposal(proposal, self._view)
+        """Validate against the exact journal revision this proposal names."""
+        try:
+            snapshot_method = getattr(self._view, "snapshot", None)
+        except Exception as exc:
+            return [Rejection(
+                Reason.READ_VIEW_OUT_OF_SYNC,
+                f"read view could not provide a snapshot: {exc}",
+            )]
+        if snapshot_method is None:
+            return [Rejection(
+                Reason.READ_VIEW_OUT_OF_SYNC,
+                "read view cannot provide a revisioned snapshot",
+            )]
+        try:
+            view_revision, snapshot = snapshot_method(proposal.proof_id)
+        except Exception as exc:
+            return [Rejection(
+                Reason.READ_VIEW_OUT_OF_SYNC,
+                f"read view could not provide a snapshot: {exc}",
+            )]
+        head_revision, _ = self._store.head(proposal.proof_id)
+        if proposal.base_revision is not None and proposal.base_revision != head_revision:
+            return [Rejection(
+                Reason.STALE_BASE_REVISION,
+                f"proposal is based on revision {proposal.base_revision}, "
+                f"head is {head_revision}",
+            )]
+        if not isinstance(view_revision, int) or not 0 <= view_revision <= head_revision:
+            return [Rejection(
+                Reason.READ_VIEW_OUT_OF_SYNC,
+                f"read view revision {view_revision!r} is ahead of journal "
+                f"head {head_revision}",
+            )]
+        try:
+            events = self._store.read_events_between(
+                proposal.proof_id, view_revision, head_revision
+            )
+            ops = tuple(
+                op for event in events for op in Proposal.from_dict(event).ops
+            )
+        except ConcurrencyError as exc:
+            return [Rejection(exc.reason, exc.detail)]
+        except (KeyError, TypeError, ValueError) as exc:
+            return [Rejection(
+                Reason.READ_VIEW_OUT_OF_SYNC,
+                f"journal events cannot be replayed for validation: {exc}",
+            )]
+        try:
+            return validate_proposal(
+                proposal, JournalOverlayView(snapshot, head_revision, ops)
+            )
+        except Exception as exc:
+            return [Rejection(
+                Reason.READ_VIEW_OUT_OF_SYNC,
+                f"read view failed during validation: {exc}",
+            )]
 
     def commit(self, proposal: Proposal) -> CommitResult:
         """Validate `proposal` and, if it holds, journal and project it.
@@ -158,11 +217,11 @@ class CommitGate:
         graph write failed. The commit stands; see that exception.
         """
         with self._lock:
-            if self._projects:
+            if self._projection is not None:
                 # Two integers in the normal case; does work only after a crash.
                 self._catch_up_locked(proposal.proof_id)
 
-            rejections = validate_proposal(proposal, self._view)
+            rejections = self.validate(proposal)
             if rejections:
                 self._audit(proposal, rejections)
                 return CommitResult(
@@ -184,12 +243,20 @@ class CommitGate:
                     revision=None,
                 )
 
-            if self._projects:
+            if self._projection is not None:
                 try:
-                    apply_ops(self._view, proposal.ops)
+                    (payload,) = self._store.read_events_between(
+                        proposal.proof_id, revision - 1, revision
+                    )
+                    event = Proposal.from_dict(payload)
+                    if event.proof_id != proposal.proof_id or not event.ops:
+                        raise ValueError(
+                            "journal event has the wrong proof or no operations"
+                        )
+                    apply_ops(self._projection, event.ops)
                 except Exception as exc:
                     raise ProjectionError(revision, event_hash, exc) from exc
-                self._view.record_projected(proposal.proof_id, revision)
+                self._projection.record_projected(proposal.proof_id, revision)
             return CommitResult(
                 accepted=True,
                 rejections=(),

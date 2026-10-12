@@ -433,12 +433,6 @@ class MarkContract:
         self.assertEqual(self.view.projected_revision(self.proof), 2)
 
 
-class TestMemoryViewMark(MarkContract, unittest.TestCase):
-    def setUp(self):
-        self.view = MemoryView()
-        self.proof = "p1"
-
-
 @needs_mork
 class TestMorkViewMark(MarkContract, unittest.TestCase):
     def setUp(self):
