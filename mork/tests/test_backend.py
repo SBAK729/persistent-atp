@@ -159,6 +159,31 @@ class TestMorkViewNodes(unittest.TestCase):
         self.assertEqual(node.label, "Renamed")
         self.assertEqual(node.fields, {"status": "closed"})
 
+    def test_enumerates_nodes_by_proof_in_id_order(self):
+        self.view.add_node(self.id_for("z"), "Claim", {"status": "conjectural"})
+        self.view.add_node(self.id_for("a"), "FormalState", {"depth": 0})
+        self.view.add_node(f"{self.proof}-other/n1", "Claim")
+
+        nodes = self.view.nodes(self.proof)
+
+        self.assertEqual(
+            [node.node_id for node in nodes],
+            [self.id_for("a"), self.id_for("z")],
+        )
+        self.assertEqual(nodes[0].fields, {"depth": 0})
+
+    def test_enumerates_nodes_by_label(self):
+        self.view.add_node(self.id_for("c2"), "Claim")
+        self.view.add_node(self.id_for("s1"), "FormalState")
+        self.view.add_node(self.id_for("c1"), "Claim")
+
+        nodes = self.view.nodes(self.proof, "Claim")
+
+        self.assertEqual(
+            [node.node_id for node in nodes],
+            [self.id_for("c1"), self.id_for("c2")],
+        )
+
     def committed_statuses(self):
         """Every atom holding a status for s1, however many there are."""
         pattern = f'(field "{self.proof}" "s1" "status" $v)'
@@ -234,6 +259,26 @@ class TestMorkViewEdges(unittest.TestCase):
         self.assertEqual(
             sorted(e.edge_id for e in self.view.edges_from(self.id_for("s1"), "PROPOSES")),
             [self.id_for("e1"), self.id_for("e2")],
+        )
+
+    def test_enumerates_edges_by_proof_and_relationship(self):
+        self.view.add_node(self.id_for("s2"), "FormalState")
+        self.view.add_edge(
+            "PROPOSES", self.id_for("s1"), self.id_for("m1"), self.id_for("z")
+        )
+        self.view.add_edge(
+            "ON_STATE", self.id_for("m1"), self.id_for("s2"), self.id_for("a")
+        )
+        other = f"{self.proof}-other"
+        self.view.add_edge("PROPOSES", f"{other}/s1", f"{other}/m1", f"{other}/e1")
+
+        self.assertEqual(
+            [edge.edge_id for edge in self.view.edges(self.proof)],
+            [self.id_for("a"), self.id_for("z")],
+        )
+        self.assertEqual(
+            [edge.edge_id for edge in self.view.edges(self.proof, "PROPOSES")],
+            [self.id_for("z")],
         )
 
     def test_remove_edge_takes_its_fields_with_it(self):

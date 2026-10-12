@@ -93,38 +93,79 @@ class MorkView:
 
     # ---------------------------------------------------------------- reads
 
+    def nodes(
+        self, proof_id: str, label: str | None = None
+    ) -> tuple[NodeRecord, ...]:
+        """All nodes in one proof, optionally restricted by label."""
+        proof = encode(proof_id)
+        if label is None:
+            rows = self._space.match(
+                f"(node {proof} $id $label)", "($id $label)"
+            )
+            identities = (
+                tuple(decode(token) for token in tokens(row)) for row in rows
+            )
+        else:
+            rows = self._space.match(
+                f"(node {proof} $id {encode(label)})", "$id"
+            )
+            identities = ((decode(row), label) for row in rows)
+
+        records = [
+            NodeRecord(
+                f"{proof_id}/{local_id}",
+                node_label,
+                dict(self._read_fields("field", proof_id, local_id)),
+            )
+            for local_id, node_label in identities
+        ]
+        return tuple(sorted(records, key=lambda record: record.node_id))
+
+    def edges(
+        self, proof_id: str, rel_type: str | None = None
+    ) -> tuple[EdgeRecord, ...]:
+        """All edges in one proof, optionally restricted by relationship type."""
+        proof = encode(proof_id)
+        if rel_type is None:
+            rows = self._space.match(
+                f"(edge {proof} $eid $rel $src $dst)",
+                "($eid $rel $src $dst)",
+            )
+            identities = (
+                tuple(decode(token) for token in tokens(row)) for row in rows
+            )
+        else:
+            rows = self._space.match(
+                f"(edge {proof} $eid {encode(rel_type)} $src $dst)",
+                "($eid $src $dst)",
+            )
+            identities = (
+                (decoded[0], rel_type, decoded[1], decoded[2])
+                for row in rows
+                if (decoded := tuple(decode(token) for token in tokens(row)))
+            )
+
+        records = [
+            self._edge_record(proof_id, local_edge, relation, local_src, local_dst)
+            for local_edge, relation, local_src, local_dst in identities
+        ]
+        return tuple(sorted(records, key=lambda record: record.edge_id))
+
     def snapshot(self, proof_id: str) -> tuple[int, ReadView]:
         """Copy one proof at a stable projected revision for validation."""
-        proof = encode(proof_id)
         for _ in range(3):
             revision = self.projected_revision(proof_id)
             clone = MemoryView()
 
-            node_rows = self._space.match(
-                f"(node {proof} $id $label)", "($id $label)"
-            )
-            for row in sorted(node_rows):
-                local_id, label = (decode(token) for token in tokens(row))
-                clone.add_node(
-                    f"{proof_id}/{local_id}",
-                    label,
-                    dict(self._read_fields("field", proof_id, local_id)),
-                )
-
-            edge_rows = self._space.match(
-                f"(edge {proof} $eid $rel $src $dst)",
-                "($eid $rel $src $dst)",
-            )
-            for row in sorted(edge_rows):
-                local_edge, rel_type, local_src, local_dst = (
-                    decode(token) for token in tokens(row)
-                )
+            for node in self.nodes(proof_id):
+                clone.add_node(node.node_id, node.label, node.fields)
+            for edge in self.edges(proof_id):
                 clone.add_edge(
-                    rel_type,
-                    f"{proof_id}/{local_src}",
-                    f"{proof_id}/{local_dst}",
-                    f"{proof_id}/{local_edge}",
-                    dict(self._read_fields("efield", proof_id, local_edge)),
+                    edge.rel_type,
+                    edge.src_id,
+                    edge.dst_id,
+                    edge.edge_id,
+                    edge.fields,
                 )
 
             if revision == self.projected_revision(proof_id):

@@ -18,6 +18,12 @@ Both projection paths emit the same committed graph vocabulary: `node`,
 a proof-scoped `projected` revision so journal replay can repair an interrupted
 projection.
 
+`MorkView.nodes(proof_id, label=None)` and
+`MorkView.edges(proof_id, rel_type=None)` enumerate graph objects without
+requiring callers to know their IDs. Results are proof-scoped and sorted by ID;
+point and adjacency reads remain available through `node`, `edge`,
+`edges_from`, and `edges_to`.
+
 ## Running with the real FFI
 
 The Python wrapper expects the length-delimited `RustBuffer` ABI provided by

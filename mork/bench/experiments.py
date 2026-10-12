@@ -296,8 +296,7 @@ def e5_commit_latency(report: Report, quick: bool) -> None:
             if not result.accepted:
                 rejected.extend(r.reason.value for r in result.rejections)
             elif backend == "MemoryView":
-                # MemoryView is projected explicitly on dev; MorkView is the
-                # live projection and is advanced by CommitGate itself.
+                # MemoryView projects explicitly; MorkView projects during commit.
                 view.apply_journal_event(store, proof, result.revision)
 
         median, p95, iterations = measure(
