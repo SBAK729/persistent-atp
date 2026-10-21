@@ -107,7 +107,7 @@ class TestJournalStore(unittest.TestCase):
         ).fetchall()
         self.assertEqual(
             [(row["fencing_token"], row["event_type"]) for row in events],
-            [(token, "acquired"), (renewed, "acquired")],
+            [(token, "acquired"), (token, "expired"), (renewed, "acquired")],
         )
         self.assertEqual(store.head("p1"), (0, GENESIS_HASH))
         self.assertEqual(
