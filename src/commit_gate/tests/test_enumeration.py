@@ -15,7 +15,7 @@ class TestMemoryViewEnumeration(EnumerationContract, unittest.TestCase):
     def test_satisfies_the_read_view_protocol(self):
         self.assertIsInstance(self.view, ReadView)
 
-    def test_listing_returns_immutable_copies(self):
+    def test_listed_records_are_read_only_at_the_top_level(self):
         record = self.view.list_nodes(self.pa)[0]
         with self.assertRaises(TypeError):
             record.fields["status"] = "tampered"
@@ -95,7 +95,60 @@ class TestJournalOverlayEnumeration(unittest.TestCase):
         self.assertEqual(
             [r.node_id for r in self.base.list_nodes("pa")], ["pa/c1", "pa/c2", "pa/fs1"]
         )
+class TestJournalOverlayIndependence(unittest.TestCase):
+    """Records the overlay returns must not share values with the pending ops."""
 
+    def setUp(self):
+        self.base = MemoryView()
+        populate_graph(self.base, "pa", "pb")
+        self.ops = (
+            UpsertNode("Claim", "pa/c4", {"steps": [1, 2], "meta": {"ok": False}}),
+            SetField("Claim", "pa/c1", "tags", ["a", "b"]),
+            AddEdge("DEPENDS_ON", "pa/c4", "pa/c1", "pa/e4", {"path": [1, 2]}),
+        )
+        self.overlay = JournalOverlayView(self.base, 7, self.ops)
+
+    def assert_pending_ops_unchanged(self):
+        self.assertEqual(dict(self.ops[0].fields), {"steps": [1, 2], "meta": {"ok": False}})
+        self.assertEqual(self.ops[1].value, ["a", "b"])
+        self.assertEqual(dict(self.ops[2].fields), {"path": [1, 2]})
+
+    def nodes(self):
+        return {r.node_id: r for r in self.overlay.list_nodes("pa")}
+
+    def test_editing_listed_nodes_never_changes_pending_ops(self):
+        listed = self.nodes()
+        listed["pa/c4"].fields["steps"].append(99)
+        listed["pa/c4"].fields["meta"]["ok"] = True
+        listed["pa/c1"].fields["tags"].append("z")
+        self.assert_pending_ops_unchanged()
+        again = self.nodes()
+        self.assertEqual(again["pa/c4"].fields["steps"], [1, 2])
+        self.assertEqual(again["pa/c4"].fields["meta"], {"ok": False})
+        self.assertEqual(again["pa/c1"].fields["tags"], ["a", "b"])
+
+    def test_editing_listed_edges_never_changes_pending_ops(self):
+        listed = {r.edge_id: r for r in self.overlay.list_edges("pa")}
+        listed["pa/e4"].fields["path"].append(99)
+        self.assert_pending_ops_unchanged()
+        again = {r.edge_id: r for r in self.overlay.list_edges("pa")}
+        self.assertEqual(again["pa/e4"].fields["path"], [1, 2])
+
+    def test_point_reads_are_independent_too(self):
+        self.overlay.node("pa/c4").fields["steps"].append(99)
+        self.overlay.node("pa/c1").fields["tags"].append("z")
+        self.overlay.edge("pa/e4").fields["path"].append(99)
+        self.assert_pending_ops_unchanged()
+
+    def test_two_reads_do_not_share_values(self):
+        first, second = self.overlay.node("pa/c4"), self.overlay.node("pa/c4")
+        self.assertIsNot(first.fields["steps"], second.fields["steps"])
+
+    def test_a_returned_records_top_level_is_read_only(self):
+        with self.assertRaises(TypeError):
+            self.overlay.node("pa/c4").fields["status"] = "tampered"
+        with self.assertRaises(TypeError):
+            self.overlay.edge("pa/e4").fields["weight"] = 1
 
 if __name__ == "__main__":
     unittest.main()

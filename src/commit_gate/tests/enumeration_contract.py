@@ -129,3 +129,42 @@ class EnumerationContract:
         self.view.remove_edge(f"{self.pa}/e2")
         ids = [r.edge_id for r in self.view.list_edges(self.pa)]
         self.assertEqual(ids, [f"{self.pa}/e1", f"{self.pa}/e3"])
+
+    # -- independence ----------------------------------------------------
+    # A returned record is a copy: editing anything inside it, nested lists
+    # and dicts included, must never change the view or a later listing.
+
+    def _add_nested(self):
+        self.view.add_node(
+            f"{self.pa}/deep", "Claim", {"steps": [1, 2], "meta": {"ok": False}}
+        )
+        self.view.add_edge(
+            "DEPENDS_ON", f"{self.pa}/deep", f"{self.pa}/c1", f"{self.pa}/e9", {"path": [1, 2]}
+        )
+
+    def _listed_node(self):
+        return next(r for r in self.view.list_nodes(self.pa) if r.node_id.endswith("/deep"))
+
+    def _listed_edge(self):
+        return next(r for r in self.view.list_edges(self.pa) if r.edge_id.endswith("/e9"))
+
+    def test_editing_a_listed_node_never_changes_the_view(self):
+        self._add_nested()
+        record = self._listed_node()
+        record.fields["steps"].append(99)
+        record.fields["meta"]["ok"] = True
+        for again in (self._listed_node(), self.view.node(f"{self.pa}/deep")):
+            self.assertEqual(dict(again.fields), {"steps": [1, 2], "meta": {"ok": False}})
+
+    def test_editing_a_listed_edge_never_changes_the_view(self):
+        self._add_nested()
+        self._listed_edge().fields["path"].append(99)
+        for again in (self._listed_edge(), self.view.edge(f"{self.pa}/e9")):
+            self.assertEqual(dict(again.fields), {"path": [1, 2]})
+
+    def test_two_listings_do_not_share_values(self):
+        self._add_nested()
+        first, second = self._listed_node(), self._listed_node()
+        self.assertIsNot(first.fields["steps"], second.fields["steps"])
+        first.fields["steps"].append(99)
+        self.assertEqual(second.fields["steps"], [1, 2])

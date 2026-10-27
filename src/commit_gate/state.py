@@ -114,6 +114,8 @@ class ReadView(Protocol):
         Only ids of the form ``<proof_id>/<local>`` are listed, so one proof's
         enumeration can never include another's. Records come back ordered by
         `node_id`; an unknown proof, or no match, gives an empty tuple.
+        Each record is an independent copy: editing it, nested values included,
+        never changes the view.
         """
         ...
 
@@ -123,6 +125,8 @@ class ReadView(Protocol):
         An edge belongs to the proof its `edge_id` names. Records come back
         ordered by `edge_id`; an unknown proof, or no match, gives an empty
         tuple.
+        Each record is an independent copy: editing it, nested values included,
+        never changes the view.
         """
         ...
 
@@ -392,8 +396,7 @@ class JournalOverlayView:
                 if record is None:
                     raise ValueError(f"journal sets a field on unknown node {node_id!r}")
                 record = NodeRecord(node_id, record.label, {**record.fields, op.field: op.value})
-        return record
-
+        return None if record is None else _node_copy(record)
     def edge(self, edge_id: str) -> EdgeRecord | None:
         record = self._base.edge(edge_id)
         for op in self._edge_ops.get(edge_id, ()):
@@ -401,7 +404,7 @@ class JournalOverlayView:
                 record = EdgeRecord(edge_id, op.rel_type, op.src_id, op.dst_id, dict(op.fields or {}))
             elif isinstance(op, RemoveEdge):
                 record = None
-        return record
+        return None if record is None else _edge_copy(record)
 
     def edges_from(self, node_id: str, rel_type: str) -> tuple[EdgeRecord, ...]:
         ids = {edge.edge_id for edge in self._base.edges_from(node_id, rel_type)}
